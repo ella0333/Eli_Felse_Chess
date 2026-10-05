@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9;
+  --muted:#8b949e; --agent:#58a6ff; --actor:#3fb950; --gold:#ffd700; --loss:#f85149;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:14px;background:var(--bg);color:var(--text);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.head{display:flex;justify-content:space-between;align-items:baseline;
+  gap:12px;flex-wrap:wrap;margin-bottom:12px}
+h1{margin:0;font-size:16px;font-weight:600}
+.head-right{color:var(--muted);display:flex;gap:14px;flex-wrap:wrap}
+.layout{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+
+/* the board */
+.board-wrap{flex:0 1 480px;min-width:280px}
+.board-wrap svg{display:block;width:100%;height:auto;border-radius:4px}
+.board-empty{aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+  background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--muted)}
+
+/* sidebar */
+.side{flex:1 1 300px;min-width:260px;display:flex;flex-direction:column;gap:10px}
+.card-panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px}
+.card-panel h2{margin:0 0 7px;font-size:11px;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--muted);font-weight:600}
+.badge{display:inline-block;padding:1px 7px;border-radius:9px;
+  background:#21262d;border:1px solid var(--border);font-size:11px;margin-right:5px}
+.mat-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.mat-row .who{width:46px;color:var(--muted)}
+.mat-row .taken{flex:1;font-size:17px;letter-spacing:1px;line-height:1}
+.mat-row .score{width:24px;text-align:right;color:var(--muted)}
+.adv{text-align:center;font-weight:600;padding-top:5px;border-top:1px solid #21262d}
+.moves{max-height:220px;overflow-y:auto;font-size:12px;line-height:1.6}
+.move{display:flex;gap:8px}
+.move .num{width:32px;color:var(--muted)}
+.move span{width:64px}
+.move .latest{color:var(--agent)}
+.think{font-style:italic;color:var(--muted);font-size:11px;line-height:1.5}
+.win{color:var(--actor)} .lose{color:var(--loss)}
+.result{margin-top:6px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1 id="title">Chess</h1>
+  <div class="head-right">
+    <span id="matchup"></span>
+    <span id="diff-info"></span>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="board-wrap" id="board"><div class="board-empty">no game running</div></div>
+
+  <div class="side">
+    <div class="card-panel">
+      <h2>Status</h2>
+      <div>
+        <span class="badge" id="status-badge">waiting</span>
+        <span class="badge" id="turn-badge"></span>
+      </div>
+    </div>
+    <div class="card-panel">
+      <h2>Material</h2>
+      <div id="material"></div>
+    </div>
+    <div class="card-panel">
+      <h2>Moves</h2>
+      <div class="moves" id="moves"></div>
+    </div>
+    <div class="card-panel">
+      <h2>Thinking</h2>
+      <div class="think" id="think"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let lastMoveCount = -1;
+let lastStatus = '';
+
+function renderMaterial(mat){
+  const host = document.getElementById('material');
+  host.innerHTML = '';
+  if(!mat) return;
+  [['White', mat.white_captured, mat.white_score], ['Black', mat.black_captured, mat.black_score]]
+    .forEach(([side, taken, score]) => {
+      const row = document.createElement('div');
+      row.className = 'mat-row';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = side;
+      const pieces = document.createElement('span');
+      pieces.className = 'taken';
+      pieces.textContent = taken.join('') || '-';
+      const total = document.createElement('span');
+      total.className = 'score';
+      total.textContent = score;
+      row.append(who, pieces, total);
+      host.appendChild(row);
+    });
+  const adv = document.createElement('div');
+  adv.className = 'adv';
+  adv.textContent = mat.advantage > 0 ? 'White +' + mat.advantage
+    : mat.advantage < 0 ? 'Black +' + Math.abs(mat.advantage) : 'Even';
+  host.appendChild(adv);
+}
+
+function renderMoves(state){
+  const host = document.getElementById('moves');
+  host.innerHTML = '';
+  const moves = state.moves || [];
+  moves.forEach((m, i) => {
+    const last = i === moves.length - 1;
+    const row = document.createElement('div');
+    row.className = 'move';
+    const num = document.createElement('span');
+    num.className = 'num';
+    num.textContent = m.number + '.';
+    const white = document.createElement('span');
+    white.textContent = m.white || '';
+    if(last && !m.black) white.className = 'latest';
+    const black = document.createElement('span');
+    black.textContent = m.black || '';
+    if(last && m.black) black.className = 'latest';
+    row.append(num, white, black);
+    host.appendChild(row);
+  });
+  if(state.status === 'finished' && state.result){
+    const banner = document.createElement('div');
+    banner.className = 'result ' + (state.result.includes(' won') ? 'win'
+      : state.result.startsWith('Draw') ? '' : 'lose');
+    banner.textContent = state.result + (state.result_reason ? ' (' + state.result_reason + ')' : '');
+    host.appendChild(banner);
+  }
+  host.scrollTop = host.scrollHeight;
+}
+
+function render(state){
+  if(!state || !state.fen){
+    document.getElementById('status-badge').textContent = 'no game running';
+    return;
+  }
+  const agent = state.agent_name || 'Agent';
+  document.getElementById('title').textContent = agent + ' vs Stockfish';
+  document.getElementById('matchup').textContent =
+    agent + ' (' + state.llm_color + ') vs Stockfish (' + state.stockfish_color + ')';
+  document.getElementById('diff-info').textContent = state.difficulty || '';
+
+  document.getElementById('status-badge').textContent = state.status || '';
+  const turn = document.getElementById('turn-badge');
+  if(state.status === 'playing'){
+    turn.textContent = state.turn + "'s turn (" +
+      (state.turn === state.llm_color ? agent : 'Stockfish') + ')';
+  } else {
+    turn.textContent = state.result_reason || '';
+  }
+
+  // Redraw the board only when it changed, so the page doesn't flicker
+  const justFinished = state.status === 'finished' && lastStatus !== 'finished';
+  if(state.move_count !== lastMoveCount || justFinished){
+    lastMoveCount = state.move_count;
+    document.getElementById('board').innerHTML = state.svg;
+  }
+  lastStatus = state.status;
+
+  renderMaterial(state.material);
+  renderMoves(state);
+
+  const think = state.thinking_log || [];
+  const latest = think[think.length - 1];
+  document.getElementById('think').textContent = latest
+    ? 'Move ' + latest.move_num + ' (' + latest.color + '): ' + latest.thinking : '';
+}
+
+async function poll(){
+  try{
+    const response = await fetch('/api/module-state?key=chess');
+    render(await response.json());
+  }catch(e){
+    document.getElementById('status-badge').textContent = 'dashboard unreachable';
+  }
+}
+
+poll();
+setInterval(poll, 500);
+</script>
+</body>
+</html>
